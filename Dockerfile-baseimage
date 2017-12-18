@@ -1,0 +1,49 @@
+FROM node:8.5.0-alpine
+
+FROM docker:17.09
+
+ENV LANG ja_JP.UTF-8
+
+# Install requirements
+RUN apk add -U openssl curl tar gzip bash ca-certificates && \
+  wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://raw.githubusercontent.com/sgerrand/alpine-pkg-glibc/master/sgerrand.rsa.pub && \
+  wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.23-r3/glibc-2.23-r3.apk && \
+  apk add glibc-2.23-r3.apk && \
+  rm glibc-2.23-r3.apk
+
+# Ruby is required for reading CI_ENVIRONMENT_URL from .gitlab-ci.yml
+RUN apk add ruby git gettext
+
+# Install kubectl
+RUN curl -L -o /usr/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/latest.txt)/bin/linux/amd64/kubectl && \
+  chmod +x /usr/bin/kubectl && \
+  kubectl version --client
+
+# Install Node
+RUN addgroup -g 1000 node \
+        && adduser -u 1000 -G node -s /bin/sh -D node \
+        && apk add --no-cache \
+            libstdc++ \
+        && apk add --no-cache --virtual .build-deps \
+            binutils-gold \
+            curl \
+            g++ \
+            gcc \
+            gnupg \
+            libgcc \
+            linux-headers
+
+COPY --from=0 /usr/local/include/node /usr/local/include/node
+COPY --from=0 /usr/local/share/systemtap/tapset /usr/local/share/systemtap/tapset
+COPY --from=0 /usr/local/share/man/man1 /usr/local/share/man/man1
+COPY --from=0 /usr/local/share/doc/node /usr/local/share/doc/node
+COPY --from=0 /usr/local/bin/node /usr/local/bin/node
+COPY --from=0 /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=0 /opt/yarn /opt/yarn
+RUN cd /usr/local/bin \
+    && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && ln -s /opt/yarn/bin/yarn /usr/local/bin/yarn
+
+ENTRYPOINT []
+CMD []

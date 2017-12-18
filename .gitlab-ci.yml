@@ -1,0 +1,67 @@
+variables:
+  KUBE_DOMAIN: # 自分のドメイン名に変更する 例: example.com #
+  CI_REGISTRY_TAG: ${CI_BUILD_REF_SLUG}
+  GOOGLE_CLOUD_REGISTORY: gcr.io/example-project
+  GKE_CI_REGISTRY: https://gcr.io
+  GKE_CI_REGISTRY_IMAGE: ${GOOGLE_CLOUD_REGISTORY}/${CI_PROJECT_NAME}
+  GKE_CI_REGISTRY_USER: oauth2accesstoken
+  GKE_CI_REGISTRY_PASSWORD: # gcloud auth application-default print-access-token の値を入力する #
+
+stages:
+  - base-image
+  - build
+  - review
+  - cleanup
+
+base-deploy-image:
+  image: docker:17.09
+  stage: base-image
+  script:
+    - docker build --file Dockerfile-baseimage -t "$CI_REGISTRY_IMAGE/runner-base-image:latest" .
+    - docker login -u gitlab-ci-token -p "$CI_BUILD_TOKEN" "$CI_REGISTRY"
+    - docker push "$CI_REGISTRY_IMAGE/runner-base-image:latest"
+
+build:
+  image: "$CI_REGISTRY_IMAGE/runner-base-image:latest"
+  stage: build
+  script:
+    - npm install
+    - docker build -t "$GKE_CI_REGISTRY_IMAGE:latest" .
+    - docker login -u ${GKE_CI_REGISTRY_USER} -p "$(echo $GKE_CI_REGISTRY_PASSWORD)" ${GKE_CI_REGISTRY}
+    - docker push "$GKE_CI_REGISTRY_IMAGE:latest"
+  only:
+    - branches
+
+review:
+  image: "$CI_REGISTRY_IMAGE/runner-base-image:latest"
+  stage: review
+  script:
+    - npm install --save yamljs
+    - command ./ci/deploy
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    url: https://$CI_ENVIRONMENT_SLUG.$KUBE_DOMAIN
+    on_stop: stop_review
+  only:
+    - branches
+  variables:
+    GLOBAL_STATIC_IP_NAME: feature-global-ip
+    TLS_SECRET_NAME: wildcard-feature-tls
+    TLS_CRT: # 変更箇所 証明書のCRTファイルの中身をbase64エンコードする #
+    TLS_KEY: # 変更箇所 証明書のKEYファイルの中身をbase64エンコードする #
+
+stop_review:
+  image: "$CI_REGISTRY_IMAGE/runner-base-image:latest"
+  stage: cleanup
+  script:
+    - npm install --save yamljs
+    - command ./ci/destroy
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    action: stop
+  when: manual
+  only:
+    - branches
+  variables:
+    GLOBAL_STATIC_IP_NAME: feature-global-ip
+    TLS_SECRET_NAME: wildcard-feature-tls

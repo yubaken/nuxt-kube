@@ -1,0 +1,15 @@
+.DS_Store
+
+.idea
+
+kube/
+ci/
+.nuxt/
+dist/
+log/
+test/e2e/reports/
+npm-debug.log
+selenium-debug.log
+test/unit/coverage
+test/reports/
+*.zip

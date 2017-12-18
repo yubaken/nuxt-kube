@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+done
+
+export DEPLOY_ROOT_DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+source "$DEPLOY_ROOT_DIR/src/common.bash"
+
+ensure_environment_url
+ensure_deploy_variables
+create_kubeconfig
+
+export CI_ENVIRONMENT_URL
+CI_ENVIRONMENT_HOSTNAME="${CI_ENVIRONMENT_URL}"
+CI_ENVIRONMENT_HOSTNAME="${CI_ENVIRONMENT_HOSTNAME/http:\/\//}"
+CI_ENVIRONMENT_HOSTNAME="${CI_ENVIRONMENT_HOSTNAME/https:\/\//}"
+export CI_ENVIRONMENT_HOSTNAME
+
+cat <<EOF | kubectl apply -f -
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: $KUBE_NAMESPACE
+EOF
+
+track="${1-stable}"
+export track
+name="$CI_ENVIRONMENT_SLUG"
+
+if [[ "$track" != "stable" ]]; then
+  name="$name-$track"
+fi
+export name
+
+env_track="${track^^}"
+env_slug="${CI_ENVIRONMENT_SLUG//-/_}"
+env_slug="${env_slug^^}"
+
+echo "Deploying $CI_ENVIRONMENT_SLUG (track: $track, replicas: $replicas) with $GKE_CI_REGISTRY_IMAGE..."
+
+echo "Create review env"
+# Let's Encryptを使用する場合はlegoのPodを作成する
+# envsubst < kube/lego.yaml | kubectl apply -n $KUBE_NAMESPACE --force -f -
+
+export TLS_CRT=$TLS_CRT
+export TLS_KEY=$TLS_KEY
+envsubst < kube/secret.yaml | kubectl apply -n $KUBE_NAMESPACE --force -f -
+
+if [[ $(kubectl -n ${KUBE_NAMESPACE} get ing/${GLOBAL_STATIC_IP_NAME} -o=name | wc -l) == 1 ]]; then
+  kubectl -n $KUBE_NAMESPACE get ing/$GLOBAL_STATIC_IP_NAME -o yaml > kube/feature-ingress-tmp.yaml
+  envsubst < kube/ingress.yaml > kube/ingress-feature-conver-env.yaml
+  node ci/add-host-to-ingress.js $CI_ENVIRONMENT_HOSTNAME $TLS_SECRET_NAME
+  kubectl apply -n $KUBE_NAMESPACE --force -f kube/feature-ingress-tmp.yaml
+else
+  envsubst < kube/ingress.yaml | kubectl apply -n $KUBE_NAMESPACE --force -f -
+fi
+
+envsubst < kube/service.yaml | kubectl apply -n $KUBE_NAMESPACE --force -f -
+envsubst < kube/deployment.yaml | kubectl apply -n $KUBE_NAMESPACE --force -f -
+
+echo "Waiting for deployment..."
+kubectl rollout status -n "$KUBE_NAMESPACE" -w "deployment/$name"
+
+echo "Application is accessible at: ${CI_ENVIRONMENT_URL}"
+echo ""

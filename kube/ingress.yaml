@@ -1,0 +1,32 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: $GLOBAL_STATIC_IP_NAME
+  namespace: $KUBE_NAMESPACE
+  labels:
+    app: $GLOBAL_STATIC_IP_NAME
+  annotations:
+    kubernetes.io/tls-acme: "true"
+    kubernetes.io/ingress.global-static-ip-name: "$GLOBAL_STATIC_IP_NAME"
+spec:
+  tls:
+  - hosts:
+    - $CI_ENVIRONMENT_HOSTNAME
+    secretName: $TLS_SECRET_NAME
+  rules:
+  - host: $CI_ENVIRONMENT_HOSTNAME
+    http:
+      paths:
+    # Let's Encryptを使用する場合は専用サービスを指定
+    # - path: /healthz
+    #    backend:
+    #      serviceName: kube-lego-svc
+    #      servicePort: 80
+    #  - path: /.well-known/acme-challenge/*
+    #    backend:
+    #      serviceName: kube-lego-svc
+    #      servicePort: 80
+      - path: /*
+        backend:
+          serviceName: $CI_ENVIRONMENT_SLUG
+          servicePort: 80

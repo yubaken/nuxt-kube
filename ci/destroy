@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+done
+
+export DEPLOY_ROOT_DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+source "$DEPLOY_ROOT_DIR/src/common.bash"
+
+create_kubeconfig
+
+CI_ENVIRONMENT_HOSTNAME="${CI_ENVIRONMENT_URL}"
+CI_ENVIRONMENT_HOSTNAME="${CI_ENVIRONMENT_HOSTNAME/http:\/\//}"
+CI_ENVIRONMENT_HOSTNAME="${CI_ENVIRONMENT_HOSTNAME/https:\/\//}"
+export CI_ENVIRONMENT_HOSTNAME
+
+echo "Removing all pods..."
+
+# 開発環境の場合はingressを削除せず、hostとtlsのみ取り除く
+kubectl -n $KUBE_NAMESPACE get ing/$GLOBAL_STATIC_IP_NAME -o yaml > kube/feature-ingress-tmp.yaml
+node ci/delete-host-by-ingress.js $CI_ENVIRONMENT_HOSTNAME $TLS_SECRET_NAME
+if [ $? == 0 ]; then
+  kubectl delete ing/$GLOBAL_STATIC_IP_NAME -n "$KUBE_NAMESPACE"
+else
+  kubectl apply -n $KUBE_NAMESPACE --force -f kube/feature-ingress-tmp.yaml
+fi
+kubectl delete all,svc,pv,pvc,secret -l "app=${CI_ENVIRONMENT_SLUG}" -n "$KUBE_NAMESPACE"
